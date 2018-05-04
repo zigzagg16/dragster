@@ -1,9 +1,14 @@
 import Foundation
 import UIKit
 
+protocol DragsterDelegate: class {
+    func percentageDidChange(to percentage: CGFloat)
+    func topConstraintDidChange(to constant: CGFloat)
+}
+
 protocol DragsterProtocol {
     var configuration: DragsterConfig { get set }
-    func start(with configuration: DragsterConfig, constraint: NSLayoutConstraint)
+    func start(with configuration: DragsterConfig, constraint: NSLayoutConstraint, delegate: DragsterDelegate?)
     func open(animated: Bool, completion: @escaping (() -> Void))
     func close(animated: Bool, completion: @escaping (() -> Void))
     var percentage: CGFloat { get }
@@ -21,12 +26,15 @@ class Dragster: UIView, DragsterProtocol {
     private var originalConstant: CGFloat = 0.0
     private var panningStartConstant: CGFloat = 0.0
     private var constraint: NSLayoutConstraint = NSLayoutConstraint()
+    weak var delegate: DragsterDelegate?
 
     func start(with configuration: DragsterConfig,
-               constraint: NSLayoutConstraint) {
+               constraint: NSLayoutConstraint,
+               delegate: DragsterDelegate? = nil) {
         self.constraint = constraint
         self.originalConstant = constraint.constant
         self.configuration = configuration
+        self.delegate = delegate
         let panGesture = UIPanGestureRecognizer(target: self, action: #selector(panned(_:)))
         addGestureRecognizer(panGesture)
         close(animated: false, completion: {})
@@ -58,6 +66,12 @@ class Dragster: UIView, DragsterProtocol {
         percentage = calculatePercentage(originalValue: range.upperBound,
                                          value: constraint.constant,
                                          max: range.lowerBound)
+        delegateValues()
+    }
+
+    private func delegateValues() {
+        delegate?.topConstraintDidChange(to: constraint.constant)
+        delegate?.percentageDidChange(to: percentage)
     }
 
     private func calculatePercentage(originalValue: CGFloat,
@@ -77,10 +91,12 @@ class Dragster: UIView, DragsterProtocol {
     }
 
     func open(animated: Bool, completion: @escaping (() -> Void)) {
+        percentage = 100
         animateToValue(value: configuration.opened, animated: animated, completion: completion)
     }
 
     func close(animated: Bool, completion: @escaping (() -> Void)) {
+        percentage = 0
         animateToValue(value: configuration.closed, animated: animated, completion: completion)
     }
 
@@ -96,10 +112,12 @@ class Dragster: UIView, DragsterProtocol {
                             self.superview!.layoutIfNeeded()
             }, completion: { _ in
                 self.haptickFeedback()
+                self.delegateValues()
                 completion()
             })
         } else {
             constraint.constant = value
+            delegateValues()
             completion()
         }
     }
@@ -121,14 +139,13 @@ class Dragster: UIView, DragsterProtocol {
                              tolerance: CGFloat,
                              range: ClosedRange<CGFloat>) -> CGFloat {
         let expectedValue = constant + translation
+
         if expectedValue > range.upperBound { //if lower than the closed value
-            let log = logarithm(tolerance, translation)
-            let finalValue = constant + log
-            return finalValue
+            let difference = expectedValue - range.upperBound
+            return range.upperBound + logarithm(tolerance, difference)
         } else if expectedValue < range.lowerBound {
-            let log = logarithm(tolerance, abs(translation)) - (tolerance * 2)
-            let finalValue = range.lowerBound - (log.isInfinite ? 0 : log)
-            return finalValue
+            let difference = range.lowerBound - expectedValue
+            return range.lowerBound - logarithm(tolerance, difference)
         }
         return expectedValue
     }
